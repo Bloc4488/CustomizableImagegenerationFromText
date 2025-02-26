@@ -1,7 +1,8 @@
-from menu import Menu
+from menu import ImageGeneratorMenu
 
 def main():
-    menu = Menu()
-    menu.choose_menu()
+    menu = ImageGeneratorMenu()
+    menu.run()
+    print("End of program")
 
 main()

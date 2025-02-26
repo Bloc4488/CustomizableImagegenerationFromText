@@ -1,63 +1,90 @@
-import os
-
+import re
 import cv2
 import numpy as np
-from LoRa_with_text import LoRa_with_text
+from typing import List, Optional, Tuple
+from pathlib import Path
+from Model_with_text import StableDiffusionWithText
+from Kandinsky_with_text import KandinskyWithText
 
-GENERATED_IMAGES = "Generated Images"
+class ImageGeneratorMenu:
+    GENERATED_IMAGES_DIR = Path(__file__).parent / 'Generated Images'
 
-class Menu():
     def __init__(self):
         self.model = None
         self.image = None
-        self.prompt = None
-        self.styles = []
-        self.weights = []
+        self.prompt: Optional[str] = None
+        self.styles: List[str] = []
+        self.weights: List[float] = []
 
-    def choose_menu(self):
-        choice = None
-        while choice != 9 or not choice:
-            self.print()
-            choice = int(input("Enter your choice: "))
-            if choice == 1:
-                self.choose_model()
-            elif choice == 2:
-                self.write_prompt()
-            elif choice == 3:
-                self.choose_style()
-            elif choice == 4:
-                self.make_image()
-            elif choice == 5:
-                self.save_image()
-            else:
-                print("Invalid choice")
-        print("End of program")
+    def run(self) -> None:
+        while True:
+            self._display_menu()
+            choice = self._get_user_choice()
+            if not self._handle_choice(choice):
+                break
 
-    def print(self):
-        print("******************************")
-        print("* 1. Choose model            *")
-        print("* 2. Write prompt            *")
-        print("* 3. Choose style(s)         *")
-        print("* 4. Make image              *")
-        print("* 5. Save image              *")
-        print("* 9. Exit program            *")
-        print("******************************")
+    def _display_menu(self) -> None:
+        menu = [
+            "******************************",
+            "* 1. Choose model            *",
+            "* 2. Write prompt            *",
+            "* 3. Choose style(s)         *",
+            "* 4. Make image              *",
+            "* 5. Save image              *",
+            "* 9. Exit program            *",
+            "******************************"
+        ]
+        print("\n".join(menu))
 
-    def choose_model(self):
-        print("1. LoRa")
-        rightChoice = False
-        while(rightChoice == False):
-            choice = int(input("Choose model: "))
-            if choice == 1:
-                self.model = LoRa_with_text()
-                rightChoice = True
-            else:
-                print("Please choose a model")
-                rightChoice = False
-        print(f"Chosen model: {self.model}")
+    def _get_user_choice(self) -> int:
+        while True:
+            try:
+                return int(input("Enter your choice: "))
+            except ValueError:
+                print("Please enter a valid number.")
 
-    def write_prompt(self):
-        prompts = [
+    def _handle_choice(self, choice: int) -> bool:
+        actions = {
+            1: self._choose_model,
+            2: self._write_prompt,
+            3: self._choose_styles,
+            4: self._generate_image,
+            5: self._save_image,
+            9: lambda: False
+        }
+        action = actions.get(choice)
+        if action:
+            return action()
+        print("Invalid choice.")
+        return True
+
+
+    def _choose_model(self) -> bool:
+        models = [
+            ("Stable Diffusion 1.5", StableDiffusionWithText, {"use_lora": False, "model_id": 1.5}),
+            ("Stable Diffusion 1.4", StableDiffusionWithText, {"use_lora": False, "model_id": 1.4}),
+            ("Stable Diffusion 1.5 with LoRA", StableDiffusionWithText, {"use_lora": True, "model_id": 1.5}),
+            ("Stable Diffusion 1.4 with LoRA", StableDiffusionWithText, {"use_lora": True, "model_id": 1.4}),
+            ("Kandinsky 2.2", KandinskyWithText, {})
+        ]
+
+        for i, (name, _, _) in enumerate(models, 1):
+            print(f"{i}. {name}")
+
+        while True:
+            try:
+                choice = int(input("Choose model: "))
+                if 1 <= choice <= len(models):
+                    name, model_class, kwargs = models[choice - 1]
+                    self.model = model_class(**kwargs)
+                    print(f"Chosen model: {self.model.name}")
+                    return True
+                print("Invalid choice.")
+            except ValueError:
+                print("Please enter a valid number.")
+
+    def _write_prompt(self) -> bool:
+        default_prompts = [
             "A serene landscape with a peaceful lake reflecting the sunset, surrounded by mountains and lush trees.",
             "A quiet village covered in fresh snow, with warm lights glowing from the windows of wooden cottages.",
             "A dense jungle with towering ancient trees, vines hanging down, and a hidden temple partially covered by moss.",
@@ -69,46 +96,101 @@ class Menu():
             "A medieval battlefield at dawn, with banners flying, armored knights preparing for battle, and a castle in the distance.",
             "A bustling marketplace in an ancient city, filled with merchants selling exotic goods, colorful fabrics, and the sound of people haggling."
         ]
-        for i, prompt in enumerate(prompts, 1):
+        for i, prompt in enumerate(default_prompts, 1):
             print(f"{i}. {prompt}")
         choice = input("Enter your prompt number or type your own: ").strip()
-        if choice.isdigit() and 1 <= int(choice) <= len(prompts):
-            self.prompt = prompts[int(choice) - 1]
+        if choice.isdigit() and 1 <= int(choice) <= len(default_prompts):
+            self.prompt = default_prompts[int(choice) - 1]
         else:
             self.prompt = choice
         print(f"Selected Prompt: {self.prompt}")
+        return True
 
-    def choose_style(self):
-        self.styles = []
-        self.weights = []
-        style_count = int(input("Number of styles: "))
+    def _choose_styles(self) -> bool:
+        self.styles.clear()
+        self.weights.clear()
+        while True:
+            try:
+                style_count = int(input("Enter number of styles: "))
+                if style_count >= 0:
+                    break
+                print("Please enter a non-negative number.")
+            except ValueError:
+                print("Please enter a valid number.")
+
         for i in range(style_count):
-            self.styles.append(input(f"Enter style {i + 1} (text or folder name):"))
-            self.weights.append(float(input(f"Weight for style {i + 1} (0.0 - 1.0):")))
+            style = input(f"Enter style {i + 1}: ")
+            while True:
+                try:
+                    weight = float(input(f"Enter weight {i + 1} (0.0 - 1.0): "))
+                    if 0 <= weight <= 1:
+                        break
+                    print("Weight must be between 0.0 and 1.0.")
+                except ValueError:
+                    print("Please enter a valid number.")
+            self.styles.append(style)
+            self.weights.append(weight)
+        return True
 
-    def make_image(self):
-        self.image = self.model.generate_image(prompt=self.prompt, style_prompts=self.styles, style_weights=self.weights)
-        self.show_image()
+    def _generate_image(self) -> bool:
+        if not self.model or not self.prompt:
+            print("Please choose a model and a prompt first.")
+            return True
+        interpolation_type = self._choose_interpolation_type()
 
-    def show_image(self):
-        image_np = self.convert_image_to_np()
-        cv2.imshow(f"Generated Image with {self.styles}", image_np)
-        cv2.waitKey(0)
+        self.image = self.model.generate_image(
+            prompt=self.prompt,
+            style_prompts=self.styles,
+            style_weights=self.weights,
+            interpolation_type=interpolation_type
+        )
+        self._show_image()
+        return True
 
-    def save_image(self):
-        styles_str = "_".join([f"{style}{weight:.2f}" for style, weight in zip(self.styles, self.weights)])
-        image_name = f"{self.prompt[:30]}_{styles_str}.png".replace(" ", "_")
-        image_path = os.path.join(GENERATED_IMAGES, image_name)
-        image_np = self.convert_image_to_np()
-        cv2.imwrite(image_path, image_np)
-        print("Image saved at", image_path)
+    def _choose_interpolation_type(self) -> str:
+        valid_types = ["linear", "nonlinear"]
+        while True:
+            try:
+                type = input(f"Choose interpolation type({valid_types}): ")
+                if type in valid_types:
+                    return type
+            except ValueError:
+                raise ValueError("Please enter a valid interpolation type.")
 
-    def convert_image_to_np(self):
+
+    def _show_image(self) -> None:
+        if self.image is not None:
+            image_np = self._convert_to_numpy()
+            styles_str = ", ".join(self.styles)
+            cv2.imshow(f"Generated Image with {styles_str}", image_np)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+
+    def _save_image(self) -> bool:
+        if self.image is None:
+            print("No image to save. Generate an image first.")
+            return True
+
+        styles_str = "_".join(f"{s}{w:.2f}" for s, w in zip(self.styles, self.weights))
+        prompt_clean = re.sub(r'[<>:"/\\|?*]]', '', self.prompt[:30])
+        image_name = f"{prompt_clean}_{styles_str}".replace(" ", "_").replace(".", "_")
+        if len(image_name) > 250:
+            image_name = image_name[:250]
+        image_name += ".png"
+
+        save_dir = self.GENERATED_IMAGES_DIR / self.model.name
+        save_dir.mkdir(parents=True, exist_ok=True)
+        image_path = save_dir / image_name
+
+        image_np = self._convert_to_numpy()
+        if cv2.imwrite(str(image_path), image_np):
+            print(f"Image saved at {image_path}")
+        else:
+            print("Image could not be saved.")
+        return True
+
+    def _convert_to_numpy(self) -> np.ndarray:
         image_np = np.array(self.image)
-        if image_np.dtype in [np.float32, np.float16]:
+        if image_np.dtype in (np.float32, np.float16):
             image_np = (image_np * 255).astype(np.uint8)
-        image_np = image_np[..., ::-1]
-        return image_np
-
-
-
+        return image_np[..., ::-1]
