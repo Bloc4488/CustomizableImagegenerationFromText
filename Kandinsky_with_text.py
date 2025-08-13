@@ -4,8 +4,8 @@ from diffusers import KandinskyV22PriorPipeline, KandinskyV22Pipeline
 from Interpolation_styles import InterpolationStyles
 
 class KandinskyWithText:
-    MODEL_PATH = "D:/Models"
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    MODEL_PATH = "/mnt/d/Models" if torch.cuda.is_available() else "D:/Models"
     def __init__(self):
         self.name: str = "Kandinsky 2.2"
         self.pipe_prior = self._initialize_pipeline("kandinsky-community/kandinsky-2-2-prior", prior=True)
@@ -43,33 +43,51 @@ class KandinskyWithText:
     def generate_image(self,
                        prompt:str,
                        style_prompts: Optional[List[str]] = None,
+                       style_folders: Optional[List[str]] = None,
                        style_weights: Optional[List[float]] = None,
-                       interpolation_type: str = "linear") -> torch.Tensor:
+                       interpolation_type: str = "linear",
+                       swirl_factor=None,
+                       smoothness=None,
+                       seed=None) -> torch.Tensor:
         if style_prompts is None:
             style_prompts = []
+        if style_folders is None:
+            style_folders = []
         if style_weights is None:
             style_weights = []
 
-        if len(style_prompts) != len(style_weights):
+        if len(style_prompts) + len(style_folders) != len(style_weights):
             raise ValueError("The number of styles must match the number of weights.")
         if not (0 <= sum(style_weights) <= 1):
             raise ValueError("Sum of style weights must be between 0 and 1.")
 
         with torch.no_grad():
             prompt_embeddings, negative_prompt_embeddings = self._get_embeddings(prompt)
-            if style_prompts:
-                styles_embeddings = [self._get_embeddings(style_prompt)[0] for style_prompt in style_prompts]
+            if style_prompts or style_folders:
+                styles_embeddings = []
+                styles_embeddings.extend(self._get_embeddings(style_prompt)[0] for style_prompt in style_prompts)
+                if style_folders:
+                    print("Warning: style_folders not yet supported in KandinskyWithText. Ignoring folders.")
                 interpolation = InterpolationStyles(prompt_embeddings, styles_embeddings, style_weights)
                 if interpolation_type.lower() == "linear":
                     final_embeddings = interpolation.linear_interpolation()
+                elif interpolation_type.lower() == "nonlinear":
+                    swirl = swirl_factor if swirl_factor is not None else 0.3
+                    final_embeddings = interpolation.nonlinear_interpolation(swirl, self.name)
+                elif interpolation_type.lower() == "spherical":
+                    smooth = smoothness if smoothness is not None else 0.8
+                    final_embeddings = interpolation.spherical_interpolation(self.name, smoothness=smooth)
                 else:
-                    final_embeddings = interpolation.nonlinear_interpolation(0.3, self.name)
-            else: final_embeddings = prompt_embeddings
-            generator = torch.Generator(self.DEVICE).manual_seed(438233955)
+                    raise ValueError(f"Unsupported interpolation_type: {interpolation_type}. "
+                                    "Supported types: 'linear', 'nonlinear', 'spherical'")
+            else:
+                final_embeddings = prompt_embeddings
+            seed_model = seed if seed is not None else 438233955
+            generator = torch.Generator(self.DEVICE).manual_seed(seed_model)
             image = self.pipe_decoder(
                 image_embeds=final_embeddings,
                 negative_image_embeds=negative_prompt_embeddings,
-                num_inference_steps=50,
+                num_inference_steps=30,
                 generator=generator,
                 height=512,
                 width=512
